@@ -748,6 +748,208 @@ async function run() {
       }
     });
 
+    // Cash-out request route
+    app.post(
+      "/cash-out-request",
+      verifyToken,
+
+      async (req, res) => {
+        const { receiverIdentifier, amount, pin } = req.body;
+        const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
+
+        try {
+          // Find sender's information including user type
+          const sender = await userCollection.findOne({ email: senderEmail });
+
+          if (!sender) {
+            return res.status(404).json({ message: "Sender not found" });
+          }
+
+          // Verify sender's user type
+          if (sender.userType !== "agent") {
+            return res
+              .status(403)
+              .json({ message: "Only agent can send cash-out requests" });
+          }
+
+          let receiver;
+
+          // Determine if receiverIdentifier is email or mobile
+          if (receiverIdentifier.includes("@")) {
+            receiver = await userCollection.findOne({
+              email: receiverIdentifier,
+            });
+          } else {
+            receiver = await userCollection.findOne({
+              mobile: receiverIdentifier,
+            });
+          }
+
+          if (!receiver) {
+            return res.status(404).json({ message: "Receiver not found" });
+          }
+
+          // Verify sender's PIN
+          const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
+          if (!isPinMatch) {
+            return res.status(401).json({ message: "Invalid PIN" });
+          }
+
+          // Validate amount
+          const numericAmount = parseFloat(amount);
+          if (isNaN(numericAmount) || numericAmount <= 0) {
+            return res.status(400).json({ message: "Invalid amount" });
+          }
+
+          // Check if sender has sufficient balance
+          if (sender.balance < numericAmount) {
+            return res.status(400).json({ message: "Insufficient balance" });
+          }
+
+          // Log the transaction
+          await logTransaction(
+            "cash-out",
+            sender.email,
+            receiverIdentifier,
+            numericAmount,
+            "pending"
+          );
+
+          res.json({
+            message: "Money sent successfully",
+            sender: sender.email,
+            receiver: receiver.email,
+          });
+        } catch (error) {
+          console.error("Error sending money:", error);
+          res.status(500).json({ message: "Internal server error" });
+        }
+      }
+    );
+
+    // Get transaction history
+    app.get("/history", async (req, res) => {
+      const result = await transactionCollection.find().toArray();
+      res.send(result);
+    });
+
+    // Get total amounts for all transaction types
+    app.get("/history/transfers", async (req, res) => {
+      try {
+        const result = await transactionCollection
+          .aggregate([
+            {
+              $group: {
+                _id: "$type",
+                total: { $sum: "$amount" },
+              },
+            },
+          ])
+          .toArray();
+
+        // Format the response
+        const totals = {
+          cashIn: 0,
+          cashOut: 0,
+          sendMoney: 0,
+        };
+
+        result.forEach((item) => {
+          if (item._id === "cash-in") {
+            totals.cashIn = item.total;
+          } else if (item._id === "cash-out") {
+            totals.cashOut = item.total;
+          } else if (item._id === "send-money") {
+            totals.sendMoney = item.total;
+          }
+        });
+
+        // Calculate the grand total
+        totals.grandTotal = totals.cashIn + totals.cashOut + totals.sendMoney;
+
+        res.send(totals);
+      } catch (error) {
+        console.error("Error getting total amounts:", error);
+        res.status(500).send({ message: "An error occurred", error });
+      }
+    });
+
+    // Get transaction history separated by user email, type, and total amount
+    app.get("/history/:email", async (req, res) => {
+      const { email } = req.params;
+
+      try {
+        // Find transactions where user email matches sender or receiver
+        const transactions = await transactionCollection
+          .find({
+            $or: [{ sender: email }, { receiver: email }],
+          })
+          .toArray();
+
+        // Initialize an object to store aggregated results
+        const result = {
+          cashIn: 0,
+          cashOut: 0,
+          sendMoney: 0,
+          other: 0,
+        };
+
+        // Aggregate transactions based on type and calculate total amounts
+        transactions.forEach((transaction) => {
+          switch (transaction.type) {
+            case "cash-in":
+              result.cashIn += transaction.amount;
+              break;
+            case "cash-out":
+              result.cashOut += transaction.amount;
+              break;
+            case "send-money":
+              result.sendMoney += transaction.amount;
+              break;
+            default:
+              result.other += transaction.amount;
+              break;
+          }
+        });
+
+        // Send the aggregated result as JSON response
+        res.json(result);
+      } catch (error) {
+        console.error("Error fetching transaction history:", error);
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+
+    // Get a transaction by ID
+    app.get("/history/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const test = await transactionCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.send(test);
+    });
+
+    // DELETE route to remove a transaction log by ID
+    app.delete("/history/:id", verifyToken, async (req, res) => {
+      const { id } = req.params;
+
+      try {
+        // Find and delete the transaction log
+        const result = await transactionCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 1) {
+          res.json({ message: "Transaction request declined successfully" });
+        } else {
+          res.status(404).json({ message: "Transaction not found" });
+        }
+      } catch (error) {
+        console.error("Error deleting transaction log:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     console.log("Connected to MongoDB successfully!");
   } finally {
     // await client.close();
