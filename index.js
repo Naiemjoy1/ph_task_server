@@ -950,6 +950,120 @@ async function run() {
       }
     });
 
+    const { ObjectId } = require("mongodb");
+
+    app.patch("/history/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+
+      try {
+        // Find the transaction
+        const transaction = await transactionCollection.findOne({
+          _id: new ObjectId(id),
+          status: "pending",
+        });
+
+        if (!transaction) {
+          return res
+            .status(404)
+            .send({ message: "Transaction not found or already confirmed" });
+        }
+
+        const { sender, receiver, amount, type } = transaction;
+
+        // Find sender and receiver
+        const senderUser = await userCollection.findOne({ email: sender });
+        const receiverUser = await userCollection.findOne({ email: receiver });
+
+        if (!senderUser || !receiverUser) {
+          return res
+            .status(404)
+            .send({ message: "Sender or receiver not found" });
+        }
+
+        // Process transactions without deleting logs
+        if (type === "cash-request") {
+          if (receiverUser.balance < amount) {
+            return res
+              .status(400)
+              .send({ message: "Receiver has insufficient balance" });
+          }
+
+          await userCollection.updateOne(
+            { email: sender },
+            { $inc: { balance: amount } }
+          );
+          await userCollection.updateOne(
+            { email: receiver },
+            { $inc: { balance: -amount } }
+          );
+        } else if (type === "withdraw-request") {
+          if (senderUser.balance < amount) {
+            return res
+              .status(400)
+              .send({ message: "Sender has insufficient balance" });
+          }
+
+          await userCollection.updateOne(
+            { email: sender },
+            { $inc: { balance: -amount } }
+          );
+          await userCollection.updateOne(
+            { email: receiver },
+            { $inc: { balance: amount } }
+          );
+        }
+
+        // Update transaction status to "confirmed" but do NOT delete the log
+        const result = await transactionCollection.updateOne(
+          { _id: new ObjectId(id), status: "pending" },
+          { $set: { status: "confirm" } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ message: "Transaction confirmed successfully" });
+        } else {
+          res
+            .status(404)
+            .send({ message: "Transaction not found or already confirmed" });
+        }
+      } catch (error) {
+        console.error("Error updating transaction:", error);
+        res.status(500).send({ message: "An error occurred", error });
+      }
+    });
+
+    app.get("/income", verifyToken, async (req, res) => {
+      try {
+        const result = await transactionCollection
+          .aggregate([
+            {
+              $match: {
+                type: { $in: ["transaction-fee", "admin-fee", "agent-fee"] },
+              },
+            },
+            {
+              $group: {
+                _id: "$receiver",
+                totalAmount: { $sum: "$amount" },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                receiver: "$_id",
+                totalAmount: 1,
+              },
+            },
+          ])
+          .toArray();
+
+        res.json(result);
+      } catch (error) {
+        console.error("Error fetching income data:", error);
+        res.status(500).json({ message: "An error occurred", error });
+      }
+    });
+
     console.log("Connected to MongoDB successfully!");
   } finally {
     // await client.close();
