@@ -95,7 +95,7 @@ This is the client-side application for a Mobile Financial Service (MFS) similar
 2. **Navigate to Project Directory:**
 
    ```bash
-   cd mfs-client
+   cd ph_task_server
    ```
 
 3. **Install Dependencies:**
