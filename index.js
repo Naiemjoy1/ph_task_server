@@ -12,8 +12,8 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://mfs-ph.web.app/",
-      "https://mfs-ph.firebaseapp.com/",
+      "https://mfs-ph.web.app",
+      "https://mfs-ph.firebaseapp.com",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
