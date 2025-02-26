@@ -89,7 +89,7 @@ This is the client-side application for a Mobile Financial Service (MFS) similar
 1. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/Naiemjoy1/mfs-client.git
+   git clone https://github.com/Naiemjoy1/ph_task_client
    ```
 
 2. **Navigate to Project Directory:**
