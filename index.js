@@ -66,6 +66,54 @@ async function run() {
       });
     };
 
+    // User registration route
+    app.post("/users", async (req, res) => {
+      const { name, pin, nid, mobile, email, profileImage, userType } =
+        req.body;
+
+      // Check if user already exists
+      const existingUser = await userCollection.findOne({
+        $or: [{ mobile }, { email }],
+      });
+      if (existingUser) {
+        return res.status(400).json({ message: "User already exists" });
+      }
+
+      // Hash the PIN
+      const salt = await bcrypt.genSalt(10);
+      const hashedPin = await bcrypt.hash(pin.toString(), salt);
+
+      // Set initial balance based on user type
+      let initialBalance = 0;
+      if (userType === "user") {
+        initialBalance = 40;
+      } else if (userType === "agent") {
+        initialBalance = 100000;
+      }
+
+      // Create new user
+      const newUser = {
+        name,
+        pin: hashedPin,
+        mobile,
+        nid,
+        email,
+        profileImage,
+        userType,
+        balance: initialBalance,
+        status: "pending",
+      };
+
+      const result = await userCollection.insertOne(newUser);
+      res.status(201).json(result);
+    });
+
+    // Get all users (for testing purposes)
+    app.get("/users", verifyToken, async (req, res) => {
+      const result = await userCollection.find().toArray();
+      res.send(result);
+    });
+
     console.log("Connected to MongoDB successfully!");
   } finally {
     // await client.close();
