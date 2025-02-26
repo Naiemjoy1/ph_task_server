@@ -66,12 +66,10 @@ async function run() {
       });
     };
 
-    // User registration route
     app.post("/users", async (req, res) => {
       const { name, pin, nid, mobile, email, profileImage, userType } =
         req.body;
 
-      // Check if user already exists
       const existingUser = await userCollection.findOne({
         $or: [{ mobile }, { email }],
       });
@@ -79,11 +77,9 @@ async function run() {
         return res.status(400).json({ message: "User already exists" });
       }
 
-      // Hash the PIN
       const salt = await bcrypt.genSalt(10);
       const hashedPin = await bcrypt.hash(pin.toString(), salt);
 
-      // Set initial balance based on user type
       let initialBalance = 0;
       if (userType === "user") {
         initialBalance = 40;
@@ -91,7 +87,6 @@ async function run() {
         initialBalance = 100000;
       }
 
-      // Create new user
       const newUser = {
         name,
         pin: hashedPin,
@@ -108,13 +103,11 @@ async function run() {
       res.status(201).json(result);
     });
 
-    // Get all users (for testing purposes)
     app.get("/users", async (req, res) => {
       const result = await userCollection.find().toArray();
       res.send(result);
     });
 
-    // role api
     app.get("/user/:email", async (req, res) => {
       const email = req.params.email;
       const user = await userCollection.findOne(
@@ -128,14 +121,12 @@ async function run() {
       }
     });
 
-    // Delete user route
     app.delete("/users/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const result = await userCollection.deleteOne({ _id: new ObjectId(id) });
       res.send(result);
     });
 
-    //route to update user status
     app.patch("/users/status/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
       const { status } = req.body;
@@ -159,7 +150,6 @@ async function run() {
       }
     });
 
-    //role change api
     app.patch("/users/admin/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const { userType } = req.body;
@@ -184,11 +174,9 @@ async function run() {
       }
     });
 
-    // Login API
     app.post("/login", async (req, res) => {
       const { email, pin } = req.body;
 
-      // Find user by email or mobile
       const user = await userCollection.findOne({
         $or: [{ email }, { mobile: email }],
       });
@@ -196,13 +184,11 @@ async function run() {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // Compare hashed PIN
       const isMatch = await bcrypt.compare(pin.toString(), user.pin);
       if (!isMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      // Generate JWT token
       const token = jwt.sign(
         { id: user._id, email: user.email },
         process.env.ACCESS_TOKEN_SECRET,
@@ -210,9 +196,6 @@ async function run() {
           expiresIn: "1h",
         }
       );
-      // console.log("token", token);
-
-      // Return token and user data
       res.json({
         message: "Login successful",
         token,
@@ -226,13 +209,11 @@ async function run() {
       });
     });
 
-    // Send money route
     app.post("/send-money", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
       const senderEmail = req.body.senderEmail;
 
       try {
-        // Find sender and receiver
         const sender = await userCollection.findOne({ email: senderEmail });
         let receiver;
 
@@ -246,7 +227,6 @@ async function run() {
           });
         }
 
-        // Find a single admin user
         const admin = await userCollection.findOne({ userType: "admin" });
 
         if (!sender || !receiver || !admin) {
@@ -255,59 +235,49 @@ async function run() {
             .json({ message: "Receiver or admin not found" });
         }
 
-        // Ensure sender and receiver are normal users
         if (sender.userType !== "user" || receiver.userType !== "user") {
           return res
             .status(403)
             .json({ message: "Users can only send to other users" });
         }
 
-        // Verify sender's PIN
         const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
         if (!isPinMatch) {
           return res.status(401).json({ message: "Invalid PIN" });
         }
 
-        // Validate amount
         const numericAmount = parseFloat(amount);
         if (isNaN(numericAmount) || numericAmount <= 0) {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // Calculate transaction fee
         const fee = numericAmount > 100 ? 5 : 0;
         const totalAmount = numericAmount + fee;
 
-        // Check sender's balance
         if (sender.balance < totalAmount) {
           return res.status(400).json({ message: "Insufficient balance" });
         }
 
-        // Perform the transaction
         const updatedSenderBalance = sender.balance - totalAmount;
         const updatedReceiverBalance = receiver.balance + numericAmount;
         const updatedAdminBalance = admin.balance + fee; // Add fee to admin's balance
 
-        // Update sender balance
         await userCollection.updateOne(
           { _id: sender._id },
           { $set: { balance: updatedSenderBalance } }
         );
 
-        // Update receiver balance
         await userCollection.updateOne(
           { _id: receiver._id },
           { $set: { balance: updatedReceiverBalance } }
         );
 
-        // Update admin balance with the transaction fee
         if (fee > 0) {
           await userCollection.updateOne(
             { _id: admin._id },
             { $set: { balance: updatedAdminBalance } }
           );
 
-          // Log transaction fee for admin
           await logTransaction(
             "transaction-fee",
             sender.email,
@@ -316,7 +286,6 @@ async function run() {
           );
         }
 
-        // Log the main transaction
         await logTransaction(
           "send-money",
           sender.email,
@@ -335,7 +304,6 @@ async function run() {
       }
     });
 
-    // Cash Out route
     app.post("/cash-out", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
       const senderEmail = req.body.senderEmail;
@@ -382,32 +350,26 @@ async function run() {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // Calculate total fee (1.5% of the amount)
         const totalFee = numericAmount * 0.015;
-        const adminFee = numericAmount * 0.005; // 0.5% to admin
-        const agentFee = numericAmount * 0.01; // 1% to agent
-        const netAmount = numericAmount - totalFee; // Amount user actually sends
+        const adminFee = numericAmount * 0.005;
+        const agentFee = numericAmount * 0.01;
+        const netAmount = numericAmount - totalFee;
 
         if (sender.balance < numericAmount) {
           return res.status(400).json({ message: "Insufficient balance" });
         }
 
-        // Update sender balance
         const updatedSenderBalance = sender.balance - numericAmount;
 
-        // Update agent balance (receiver)
         const updatedReceiverBalance = receiver.balance + netAmount + agentFee;
 
-        // Find the admin user
         const admin = await userCollection.findOne({ userType: "admin" });
         if (!admin) {
           return res.status(500).json({ message: "Admin account not found" });
         }
 
-        // Update admin balance
         const updatedAdminBalance = admin.balance + adminFee;
 
-        // Perform database updates in a single batch operation
         const bulkOperations = [
           {
             updateOne: {
@@ -431,7 +393,6 @@ async function run() {
 
         await userCollection.bulkWrite(bulkOperations);
 
-        // Log transactions separately
         await logTransaction(
           "cash-out",
           sender.email,
@@ -460,17 +421,14 @@ async function run() {
       }
     });
 
-    // Cash In route
     app.post("/cash-in", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
       const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
 
       try {
-        // Find sender's and receiver's information
         const sender = await userCollection.findOne({ email: senderEmail });
         let receiver;
 
-        // Determine if receiverIdentifier is email or mobile
         if (receiverIdentifier.includes("@")) {
           receiver = await userCollection.findOne({
             email: receiverIdentifier,
@@ -481,48 +439,40 @@ async function run() {
           });
         }
 
-        // Check if sender and receiver exist
         if (!sender || !receiver) {
           return res.status(404).json({ message: "Receiver not found" });
         }
 
-        // Check if the sender is an agent
         if (sender.userType !== "agent") {
           return res
             .status(403)
             .json({ message: "Only agents can do cash-in" });
         }
 
-        // Ensure the receiver is a user and not an agent
         if (receiver.userType !== "user") {
           return res
             .status(403)
             .json({ message: "Agents can only send to users" });
         }
 
-        // Verify sender's PIN
         const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
         if (!isPinMatch) {
           return res.status(401).json({ message: "Invalid PIN" });
         }
 
-        // Validate amount
         const numericAmount = parseFloat(amount);
         if (isNaN(numericAmount) || numericAmount <= 0) {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // Check if sender has sufficient balance
         if (sender.balance < numericAmount) {
           return res.status(400).json({ message: "Insufficient balance" });
         }
 
-        // Perform the transaction
         const updatedSenderBalance = parseFloat(sender.balance) - numericAmount;
         const updatedReceiverBalance =
           parseFloat(receiver.balance) + numericAmount;
 
-        // Update balances in the database
         await userCollection.updateOne(
           { _id: sender._id },
           { $set: { balance: updatedSenderBalance } }
@@ -533,7 +483,6 @@ async function run() {
           { $set: { balance: updatedReceiverBalance } }
         );
 
-        // Log the transaction
         await logTransaction(
           "cash-in",
           sender.email,
@@ -552,20 +501,17 @@ async function run() {
       }
     });
 
-    // Cash-in request route
     app.post("/cash-in-request", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
       const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
 
       try {
-        // Find sender's information including user type
         const sender = await userCollection.findOne({ email: senderEmail });
 
         if (!sender) {
           return res.status(404).json({ message: "Sender not found" });
         }
 
-        // Verify sender's user type
         if (sender.userType !== "user") {
           return res
             .status(403)
@@ -574,7 +520,6 @@ async function run() {
 
         let receiver;
 
-        // Determine if receiverIdentifier is email or mobile
         if (receiverIdentifier.includes("@")) {
           receiver = await userCollection.findOne({
             email: receiverIdentifier,
@@ -589,24 +534,16 @@ async function run() {
           return res.status(404).json({ message: "Receiver not found" });
         }
 
-        // Verify sender's PIN
         const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
         if (!isPinMatch) {
           return res.status(401).json({ message: "Invalid PIN" });
         }
 
-        // Validate amount
         const numericAmount = parseFloat(amount);
         if (isNaN(numericAmount) || numericAmount <= 0) {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // // Check if sender has sufficient balance
-        // if (sender.balance < numericAmount) {
-        //   return res.status(400).json({ message: "Insufficient balance" });
-        // }
-
-        // Log the transaction
         await logTransaction(
           "cash-in",
           sender.email,
@@ -626,27 +563,23 @@ async function run() {
       }
     });
 
-    // Cash request route (Agent to Admin)
     app.post("/cash-request", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
-      const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
+      const senderEmail = req.body.senderEmail;
 
       try {
-        // Find sender's information including user type
         const sender = await userCollection.findOne({ email: senderEmail });
 
         if (!sender) {
           return res.status(404).json({ message: "Sender not found" });
         }
 
-        // Verify sender's user type (Only agents can request cash)
         if (sender.userType !== "agent") {
           return res
             .status(403)
             .json({ message: "Only agents can request cash" });
         }
 
-        // Ensure receiver is an admin
         const receiver = await userCollection.findOne({
           email: receiverIdentifier,
           userType: "admin",
@@ -655,19 +588,16 @@ async function run() {
           return res.status(404).json({ message: "Admin not found" });
         }
 
-        // Verify sender's PIN
         const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
         if (!isPinMatch) {
           return res.status(401).json({ message: "Invalid PIN" });
         }
 
-        // Validate amount
         const numericAmount = parseFloat(amount);
         if (isNaN(numericAmount) || numericAmount <= 0) {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // Log the transaction without charging any fee
         await logTransaction(
           "cash-request",
           sender.email,
@@ -687,27 +617,23 @@ async function run() {
       }
     });
 
-    // withdraw-request route (Agent to Admin)
     app.post("/withdraw-request", verifyToken, async (req, res) => {
       const { receiverIdentifier, amount, pin } = req.body;
-      const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
+      const senderEmail = req.body.senderEmail;
 
       try {
-        // Find sender's information including user type
         const sender = await userCollection.findOne({ email: senderEmail });
 
         if (!sender) {
           return res.status(404).json({ message: "Sender not found" });
         }
 
-        // Verify sender's user type (Only agents can request cash)
         if (sender.userType !== "agent") {
           return res
             .status(403)
             .json({ message: "Only agents can request cash" });
         }
 
-        // Ensure receiver is an admin
         const receiver = await userCollection.findOne({
           email: receiverIdentifier,
           userType: "admin",
@@ -716,19 +642,16 @@ async function run() {
           return res.status(404).json({ message: "Admin not found" });
         }
 
-        // Verify sender's PIN
         const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
         if (!isPinMatch) {
           return res.status(401).json({ message: "Invalid PIN" });
         }
 
-        // Validate amount
         const numericAmount = parseFloat(amount);
         if (isNaN(numericAmount) || numericAmount <= 0) {
           return res.status(400).json({ message: "Invalid amount" });
         }
 
-        // Log the transaction without charging any fee
         await logTransaction(
           "withdraw-request",
           sender.email,
@@ -748,7 +671,6 @@ async function run() {
       }
     });
 
-    // Cash-out request route
     app.post(
       "/cash-out-request",
       verifyToken,
@@ -758,14 +680,12 @@ async function run() {
         const senderEmail = req.body.senderEmail; // Assuming sender's email is passed from frontend
 
         try {
-          // Find sender's information including user type
           const sender = await userCollection.findOne({ email: senderEmail });
 
           if (!sender) {
             return res.status(404).json({ message: "Sender not found" });
           }
 
-          // Verify sender's user type
           if (sender.userType !== "agent") {
             return res
               .status(403)
@@ -774,7 +694,6 @@ async function run() {
 
           let receiver;
 
-          // Determine if receiverIdentifier is email or mobile
           if (receiverIdentifier.includes("@")) {
             receiver = await userCollection.findOne({
               email: receiverIdentifier,
@@ -789,24 +708,20 @@ async function run() {
             return res.status(404).json({ message: "Receiver not found" });
           }
 
-          // Verify sender's PIN
           const isPinMatch = await bcrypt.compare(pin.toString(), sender.pin);
           if (!isPinMatch) {
             return res.status(401).json({ message: "Invalid PIN" });
           }
 
-          // Validate amount
           const numericAmount = parseFloat(amount);
           if (isNaN(numericAmount) || numericAmount <= 0) {
             return res.status(400).json({ message: "Invalid amount" });
           }
 
-          // Check if sender has sufficient balance
           if (sender.balance < numericAmount) {
             return res.status(400).json({ message: "Insufficient balance" });
           }
 
-          // Log the transaction
           await logTransaction(
             "cash-out",
             sender.email,
@@ -827,16 +742,13 @@ async function run() {
       }
     );
 
-    // Get transaction history
     app.get("/history", async (req, res) => {
       const result = await transactionCollection.find().toArray();
       res.send(result);
     });
 
-    // Get total amounts for all transaction types
     app.get("/history/transfers", async (req, res) => {
       try {
-        // Get total transaction amounts grouped by type
         const result = await transactionCollection
           .aggregate([
             {
@@ -848,13 +760,10 @@ async function run() {
           ])
           .toArray();
 
-        // Format the response
         const totals = {
           cashIn: 0,
           cashOut: 0,
           sendMoney: 0,
-          grandTotal: 0, // This will be calculated from active users
-          totalActiveUsers: 0, // Count of active users
         };
 
         result.forEach((item) => {
@@ -867,25 +776,7 @@ async function run() {
           }
         });
 
-        // Get the total balance of all active users and count active users
-        const activeUserStats = await usersCollection
-          .aggregate([
-            { $match: { status: "active" } }, // Filter only active users
-            {
-              $group: {
-                _id: null,
-                totalBalance: { $sum: "$balance" },
-                totalUsers: { $sum: 1 }, // Count active users
-              },
-            },
-          ])
-          .toArray();
-
-        // If there are active users, update the grand total and total active users count
-        if (activeUserStats.length > 0) {
-          totals.grandTotal = activeUserStats[0].totalBalance;
-          totals.totalActiveUsers = activeUserStats[0].totalUsers;
-        }
+        totals.grandTotal = totals.cashIn + totals.cashOut + totals.sendMoney;
 
         res.send(totals);
       } catch (error) {
@@ -894,19 +785,16 @@ async function run() {
       }
     });
 
-    // Get transaction history separated by user email, type, and total amount
     app.get("/history/:email", async (req, res) => {
       const { email } = req.params;
 
       try {
-        // Find transactions where user email matches sender or receiver
         const transactions = await transactionCollection
           .find({
             $or: [{ sender: email }, { receiver: email }],
           })
           .toArray();
 
-        // Initialize an object to store aggregated results
         const result = {
           cashIn: 0,
           cashOut: 0,
@@ -914,7 +802,6 @@ async function run() {
           other: 0,
         };
 
-        // Aggregate transactions based on type and calculate total amounts
         transactions.forEach((transaction) => {
           switch (transaction.type) {
             case "cash-in":
@@ -932,7 +819,6 @@ async function run() {
           }
         });
 
-        // Send the aggregated result as JSON response
         res.json(result);
       } catch (error) {
         console.error("Error fetching transaction history:", error);
@@ -940,7 +826,6 @@ async function run() {
       }
     });
 
-    // Get a transaction by ID
     app.get("/history/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const test = await transactionCollection.findOne({
@@ -949,12 +834,10 @@ async function run() {
       res.send(test);
     });
 
-    // DELETE route to remove a transaction log by ID
     app.delete("/history/:id", verifyToken, async (req, res) => {
       const { id } = req.params;
 
       try {
-        // Find and delete the transaction log
         const result = await transactionCollection.deleteOne({
           _id: new ObjectId(id),
         });
@@ -976,7 +859,6 @@ async function run() {
       const id = req.params.id;
 
       try {
-        // Find the transaction
         const transaction = await transactionCollection.findOne({
           _id: new ObjectId(id),
           status: "pending",
@@ -990,7 +872,6 @@ async function run() {
 
         const { sender, receiver, amount, type } = transaction;
 
-        // Find sender and receiver
         const senderUser = await userCollection.findOne({ email: sender });
         const receiverUser = await userCollection.findOne({ email: receiver });
 
@@ -1000,7 +881,6 @@ async function run() {
             .send({ message: "Sender or receiver not found" });
         }
 
-        // Process transactions without deleting logs
         if (type === "cash-request") {
           if (receiverUser.balance < amount) {
             return res
@@ -1033,7 +913,6 @@ async function run() {
           );
         }
 
-        // Update transaction status to "confirmed" but do NOT delete the log
         const result = await transactionCollection.updateOne(
           { _id: new ObjectId(id), status: "pending" },
           { $set: { status: "confirm" } }
