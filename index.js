@@ -109,7 +109,7 @@ async function run() {
     });
 
     // Get all users (for testing purposes)
-    app.get("/users", verifyToken, async (req, res) => {
+    app.get("/users", async (req, res) => {
       const result = await userCollection.find().toArray();
       res.send(result);
     });
@@ -836,6 +836,7 @@ async function run() {
     // Get total amounts for all transaction types
     app.get("/history/transfers", async (req, res) => {
       try {
+        // Get total transaction amounts grouped by type
         const result = await transactionCollection
           .aggregate([
             {
@@ -852,6 +853,8 @@ async function run() {
           cashIn: 0,
           cashOut: 0,
           sendMoney: 0,
+          grandTotal: 0, // This will be calculated from active users
+          totalActiveUsers: 0, // Count of active users
         };
 
         result.forEach((item) => {
@@ -864,8 +867,25 @@ async function run() {
           }
         });
 
-        // Calculate the grand total
-        totals.grandTotal = totals.cashIn + totals.cashOut + totals.sendMoney;
+        // Get the total balance of all active users and count active users
+        const activeUserStats = await usersCollection
+          .aggregate([
+            { $match: { status: "active" } }, // Filter only active users
+            {
+              $group: {
+                _id: null,
+                totalBalance: { $sum: "$balance" },
+                totalUsers: { $sum: 1 }, // Count active users
+              },
+            },
+          ])
+          .toArray();
+
+        // If there are active users, update the grand total and total active users count
+        if (activeUserStats.length > 0) {
+          totals.grandTotal = activeUserStats[0].totalBalance;
+          totals.totalActiveUsers = activeUserStats[0].totalUsers;
+        }
 
         res.send(totals);
       } catch (error) {
