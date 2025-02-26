@@ -114,6 +114,51 @@ async function run() {
       res.send(result);
     });
 
+    // role api
+    app.get("/user/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await userCollection.findOne(
+        { email },
+        { projection: { userType: 1, status: 1 } }
+      );
+      if (user) {
+        res.json(user);
+      } else {
+        res.status(404).send("User not found");
+      }
+    });
+
+    // Delete user route
+    app.delete("/users/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const result = await userCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    //route to update user status
+    app.patch("/users/status/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const { status } = req.body;
+
+      try {
+        const updatedUser = await userCollection.updateOne(
+          { email },
+          { $set: { status } }
+        );
+
+        if (updatedUser.modifiedCount > 0) {
+          res.send({ modifiedCount: updatedUser.modifiedCount });
+        } else {
+          res
+            .status(404)
+            .send({ message: "User not found or status not updated" });
+        }
+      } catch (error) {
+        console.error("Error updating user status:", error);
+        res.status(500).send({ message: "Internal server error" });
+      }
+    });
+
     console.log("Connected to MongoDB successfully!");
   } finally {
     // await client.close();
